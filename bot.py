@@ -143,13 +143,23 @@ async def ask_handler(message: Message):
 async def donasi_start(message: Message):
     await message.answer("🙏 maaciw donasinya.\n\n**Silahkan kirim video/foto serta caption.**\nOtomatis akan diteruskan ke Admin.")
 
-@dp.message(F.chat.type == "private", (F.photo | F.video | F.document), ~F.from_user.id == ADMIN_ID)
+@dp.message(F.chat.type == "private", (F.photo | F.video | F.document))
 async def handle_donasi_upload(message: Message):
+    # Yen sing ngirim admin dewe, cuekke wae ben ora dobel
+    if message.from_user.id == ADMIN_ID:
+        return
+
     user_info = f"🎁 **DONASI/KONTEN ANYAR**\n👤 Soko: {message.from_user.full_name}\n🆔 ID: `{message.from_user.id}`"
     
-    await bot.send_message(ADMIN_ID, user_info)
-    await bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
-    await message.reply("✅ File udah dikirim ke admin thanks!.")
+    try:
+        # Kirim info user neng admin
+        await bot.send_message(ADMIN_ID, user_info)
+        # Forward file-e neng admin
+        await bot.forward_message(ADMIN_ID, message.chat.id, message.message_id)
+        # Balas neng user
+        await message.reply("✅ File udah dikirim ke admin thanks!.")
+    except Exception as e:
+        print(f"Error forward donasi: {e}")
 
 # ================= EXISTING HANDLERS =================
 
@@ -204,3 +214,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
