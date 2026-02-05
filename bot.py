@@ -14,7 +14,7 @@ from aiogram.fsm.state import StatesGroup, State
 #================= RAILWAY ENV =================
 
 BOT_TOKEN = os.getenv
-ADMIN_IDS = int(os.getenv
+ADMIN_IDS = int(os.getenv)
 
 #================= INIT =================
 
@@ -105,6 +105,7 @@ class Donate(StatesGroup): media=State()
 async def main(): await dp.start_polling(bot)
 
 if name=='main': asyncio.run(main())
+
 
 
 
