@@ -137,10 +137,10 @@ async def handle_incoming_media(m: Message, state: FSMContext):
                     await db.commit()
                 
                 # 3. Post ke Channel Utama
-                kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=s['btn_nonton'], url=f"https://t.me/{BOT_USN}?start={code}")]])
+                kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=s['btn_nonton'], url=f"https://t.me/{emsamasamaenak_bot}?start={code}")]])
                 await bot.send_photo(s['post_ch_id'], m.photo[-1].file_id, caption=data['title'], reply_markup=kb)
                 
-                await m.answer(f"✅ **BERHASIL DIPOST!**\nLink: `https://t.me/{BOT_USN}?start={code}`")
+                await m.answer(f"✅ **BERHASIL DIPOST!**\nLink: ` https://t.me/{emsamasamaenak_bot}?start={code} `")
                 await state.clear()
             except Exception as e:
                 await m.answer(f"❌ Gagal Post! Pastikan ID Channel Benar.\nError: {e}")
@@ -250,4 +250,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
