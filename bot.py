@@ -1,5 +1,16 @@
-import asyncio, logging, sqlite3, uuid from datetime import datetime, timedelta from aiogram import Bot, Dispatcher, F from aiogram.types import * from aiogram.filters import CommandStart, Command from aiogram.enums import ChatMemberStatus, ChatType from aiogram.fsm.context import FSMContext from aiogram.fsm.state import StatesGroup, State
+import asyncio
+import logging
+import sqlite3
+import uuid
 
+from datetime import datetime, timedelta
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import *
+from aiogram.filters import CommandStart, Command
+from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 ================= RAILWAY ENV =================
 
 BOT_TOKEN = os.getenv
@@ -94,4 +105,5 @@ class Donate(StatesGroup): media=State()
 async def main(): await dp.start_polling(bot)
 
 if name=='main': asyncio.run(main())
+
 
