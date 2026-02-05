@@ -17,9 +17,10 @@ BOT_TOKEN = os.getenv
 ADMIN_IDS = int(os.getenv)
 
 #================= INIT =================
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.INFO) bot = Bot(BOT_TOKEN, parse_mode="HTML") dp = Dispatcher()
-
+bot = Bot(BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher()
 #================= DATABASE =================
 
 db = sqlite3.connect("bot.db") c = db.cursor()
@@ -105,6 +106,7 @@ class Donate(StatesGroup): media=State()
 async def main(): await dp.start_polling(bot)
 
 if name=='main': asyncio.run(main())
+
 
 
 
