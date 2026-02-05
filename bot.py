@@ -1,7 +1,7 @@
 # =============================
-# TELEGRAM BOT – FINAL CLEAN VERSION
+# TELEGRAM BOT – FINAL CLEAN VERSION (FSM FIX)
 # Aiogram 3.7+
-# Semua fitur user request
+# Semua fitur user request, StateFilter fix
 # =============================
 
 import os
@@ -18,6 +18,7 @@ from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.filters import StateFilter
 
 # =============================
 # ENV (Railway)
@@ -41,7 +42,6 @@ dp = Dispatcher()
 conn = sqlite3.connect("media.db")
 cur = conn.cursor()
 
-# USERS (AUTO RESET SAFE)
 cur.execute("DROP TABLE IF EXISTS users")
 cur.execute("""
 CREATE TABLE users (
@@ -52,7 +52,6 @@ CREATE TABLE users (
 )
 """)
 
-# MEDIA DB
 cur.execute("""
 CREATE TABLE IF NOT EXISTS media (
     code TEXT PRIMARY KEY,
@@ -62,7 +61,6 @@ CREATE TABLE IF NOT EXISTS media (
 )
 """)
 
-# SETTINGS
 cur.execute("""
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -74,6 +72,7 @@ conn.commit()
 # =============================
 # DEFAULT SETTINGS
 # =============================
+
 def set_default(key, value):
     cur.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (key, value))
     conn.commit()
@@ -86,6 +85,7 @@ set_default("fsub_join_link", "")
 # =============================
 # HELPERS
 # =============================
+
 def is_admin(uid: int):
     return uid in ADMIN_IDS
 
@@ -121,7 +121,6 @@ async def start(message: Message):
     )
     conn.commit()
 
-    # FSUB CHECK
     if not await check_fsub(uid):
         cur.execute("SELECT value FROM settings WHERE key='fsub_join_link'")
         join_link = cur.fetchone()[0]
@@ -229,7 +228,7 @@ async def panel_fsub(call: CallbackQuery, state: FSMContext):
     await state.set_state("await_fsub")
     await call.message.edit_text("Kirim username / ID channel wajib join (pisahkan dengan |)")
 
-@dp.message(FSMContext.filter(state="await_fsub"))
+@dp.message(StateFilter("await_fsub"))
 async def set_fsub(message: Message, state: FSMContext):
     cur.execute("UPDATE settings SET value=? WHERE key='fsub_links'", (message.text,))
     conn.commit()
@@ -242,7 +241,7 @@ async def panel_start_text(call: CallbackQuery, state: FSMContext):
     await state.set_state("await_start_text")
     await call.message.edit_text("Kirim teks baru untuk /start")
 
-@dp.message(FSMContext.filter(state="await_start_text"))
+@dp.message(StateFilter("await_start_text"))
 async def set_start_text(message: Message, state: FSMContext):
     cur.execute("UPDATE settings SET value=? WHERE key='start_text'", (message.text,))
     conn.commit()
@@ -255,7 +254,7 @@ async def panel_words(call: CallbackQuery, state: FSMContext):
     await state.set_state("await_words")
     await call.message.edit_text("Kirim daftar kata terlarang (pisahkan koma)")
 
-@dp.message(FSMContext.filter(state="await_words"))
+@dp.message(StateFilter("await_words"))
 async def set_words(message: Message, state: FSMContext):
     cur.execute("UPDATE settings SET value=? WHERE key='forbidden_words'", (message.text,))
     conn.commit()
