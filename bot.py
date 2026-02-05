@@ -82,7 +82,7 @@ def set_default(key, value):
 set_default("start_text", "Selamat datang 👋")
 set_default("forbidden_words", "biyo,promosi,bio,biyoh")
 set_default("fsub_links", "")
-set_default("fsub_join_link", "")=====
+set_default("fsub_join_link", "")
 # RUN
 # =============================
 async def main():
@@ -97,3 +97,4 @@ if not await check_fsub(uid):
             [InlineKeyboardButton(text="🔗 JOIN SEKARANG", url=join_link)] if join_link else [],
             [InlineKeyboardButton(text="🔄 COBA LAGI", callback_data="retry_fsub")]
         ])
+
