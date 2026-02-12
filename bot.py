@@ -199,7 +199,7 @@ async def process_broadcast(m: Message, state: FSMContext):
 
 
 # ================= ADMIN DASHBOARD (DENGAN TOMBOL HAPUS) =================
-@dp.message(Command("settings"), F.from_user.id == ADMIN_ID)
+@dp.message(Command("settings"), F.from_user.id == OWNER_ID)
 async def admin_settings(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Start Teks", callback_data="set_start_txt"), InlineKeyboardButton(text="📢 Fsub Teks", callback_data="set_fsub_txt")],
@@ -417,4 +417,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
