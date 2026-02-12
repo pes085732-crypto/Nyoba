@@ -22,7 +22,7 @@ except (TypeError, ValueError):
     OWNER_ID = 0
 
 # ================= INISIALISASI =================
-# Set default parse_mode ke Markdown agar **tebal** terbaca rapi dan tidak muncul simbolnya
+# Set default parse_mode ke Markdown agar **tebal** terbaca rapi
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 dp = Dispatcher(storage=MemoryStorage())
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +124,7 @@ async def settings_cb(c: CallbackQuery):
     await show_settings_menu(c.message, is_edit=True)
 
 async def show_settings_menu(message: Message, is_edit=False):
-    # Mengambil value saat ini untuk ditampilkan (opsional, tapi bagus untuk UX)
+    # Mengambil value saat ini untuk ditampilkan
     ch_post = await get_config("channel_post", "Belum diset")
     fsub_list = await get_config("fsub_channels", "Belum diset")
     addlist = "Sudah diset" if await get_config("addlist_link") else "Belum diset"
@@ -160,10 +160,10 @@ async def show_settings_menu(message: Message, is_edit=False):
 async def config_delete(c: CallbackQuery):
     if not await is_admin(c.from_user.id): return
     
-    # Ambil key dari callback data (misal: del_channel_post -> channel_post)
+    # Ambil key dari callback data
     key_to_delete = c.data.replace("del_", "")
     
-    # Hapus dari database config yang benar
+    # Hapus dari database config
     await delete_config(key_to_delete)
     
     await c.answer(f"✅ Konfigurasi '{key_to_delete}' berhasil dihapus!", show_alert=True)
@@ -269,23 +269,18 @@ async def update_database(m: Message):
     # Cek apakah dia OWNER atau Admin
     if not await is_admin(m.from_user.id): return
 
-    # Cek apakah dia reply sebuah file (Dokumen)
+    # Cek apakah dia reply sebuah file
     if not m.reply_to_message or not m.reply_to_message.document:
         return await m.reply("❌ **Caranya:** Reply file database (.db) yang dikirim bot, lalu ketik `/update`")
 
     doc = m.reply_to_message.document
     
-    # Validasi biar nggak asal upload file (cek nama file atau ekstensi)
     if not doc.file_name.endswith(".db"):
         return await m.reply("❌ File harus berakhiran `.db`!")
 
     try:
-        # Proses download dan menimpa file lama
         file_info = await bot.get_file(doc.file_id)
-        
-        # Download langsung menimpa DB_NAME (media.db)
         await bot.download_file(file_info.file_path, DB_NAME)
-        
         await m.reply("✅ **DATABASE UPDATED!**\nDatabase berhasil diperbarui dari pesan yang di-reply. Data baru sudah aktif.")
     except Exception as e:
         await m.reply(f"❌ Gagal update database: {e}")
@@ -418,7 +413,6 @@ async def start_handler(message: Message):
     is_joined = await check_membership(message.from_user.id)
     if not is_joined:
         addlist_link = await get_config("addlist_link")
-        # Jika addlist kosong, fallback ke link bot
         final_link = addlist_link if addlist_link else f"https://t.me/{(await bot.get_me()).username}"
         callback_url = f"https://t.me/{(await bot.get_me()).username}?start={code}" if code else f"https://t.me/{(await bot.get_me()).username}?start"
         
@@ -437,7 +431,7 @@ async def start_handler(message: Message):
 
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT file_id, type, caption FROM media WHERE code=?", (code,)) as cur:
-            row = await cursor.fetchone()
+            row = await cur.fetchone() # <--- PERBAIKAN DI SINI (sebelumnya 'cursor')
             if row:
                 if row[1] == "photo":
                     await bot.send_photo(message.chat.id, row[0], caption=row[2], protect_content=True)
