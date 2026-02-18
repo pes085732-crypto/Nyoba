@@ -293,7 +293,7 @@ async def add_admin_cb(c: CallbackQuery, state: FSMContext):
 @dp.message(AdminStates.waiting_for_new_admin, F.from_user.id == OWNER_ID)
 async def save_admin(m: Message, state: FSMContext):
     try:
-        await aiosqlite.connect(DB_NAME) as db:
+        async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("INSERT OR IGNORE INTO admins (admin_id) VALUES (?)", (int(m.text),))
             await db.commit()
         await m.reply("✅ Admin ditambahkan.")
@@ -415,3 +415,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
