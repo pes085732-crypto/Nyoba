@@ -166,8 +166,12 @@ async def process_save_title(m: Message, state: FSMContext):
 async def finish_posting(msg, state, p_title):
     data = await state.get_data()
     code = uuid.uuid4().hex[:15]
+    # Gunakan INSERT OR IGNORE dan sebutkan kolomnya satu per satu
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO media VALUES (?,?,?,?)", (code, data['temp_fid'], data['temp_type'], data['temp_caption']))
+        await db.execute(
+            "INSERT OR IGNORE INTO media (code, file_id, type, caption) VALUES (?, ?, ?, ?)", 
+            (code, data['temp_fid'], data['temp_type'], data['temp_caption'])
+        )
         await db.commit()
 
     link = f"https://t.me/{(await bot.get_me()).username}?start={code}"
@@ -369,3 +373,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
