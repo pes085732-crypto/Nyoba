@@ -32,7 +32,6 @@ DB_NAME = os.path.join(BASE_DIR, "media.db")
 class AdminStates(StatesGroup):
     waiting_for_channel_post = State()
     waiting_for_fsub_list = State()
-    waiting_for_addlist = State()
     waiting_for_broadcast = State()
     waiting_for_reply = State()
     waiting_for_new_admin = State()
@@ -48,6 +47,7 @@ class MemberStates(StatesGroup):
 
 class PostMedia(StatesGroup):
     waiting_for_post_title = State()
+    waiting_for_final_confirm = State()
 
 # ================= DATABASE HELPER =================
 async def init_db():
@@ -78,14 +78,15 @@ async def is_admin(user_id: int):
 
 async def check_membership(user_id: int):
     raw_targets = await get_config("fsub_channels")
-    if not raw_targets: return True
+    if not raw_targets: return [] # Return empty list if no fsub
     targets = raw_targets.split()
+    unjoined = []
     for target in targets:
         try:
             m = await bot.get_chat_member(chat_id=target, user_id=user_id)
-            if m.status in ("left", "kicked"): return False
-        except: continue
-    return True
+            if m.status in ("left", "kicked"): unjoined.append(target)
+        except: unjoined.append(target)
+    return unjoined
 
 # ================= KEYBOARDS =================
 async def get_titles_kb():
@@ -113,18 +114,20 @@ async def start_handler(m: Message):
     args = m.text.split()
     target_code = args[1] if len(args) > 1 else None
 
-    # WAJIB JOIN DULU
-    if not await check_membership(m.from_user.id):
-        link = await get_config("addlist_link") or "https://t.me"
+    unjoined = await check_membership(m.from_user.id)
+    if unjoined:
+        kb_list = []
+        for i, ch in enumerate(unjoined, 1):
+            # Mengasumsikan format @username
+            url = f"https://t.me/{ch.replace('@', '')}"
+            kb_list.append([InlineKeyboardButton(text=f"📢 JOIN CHANNEL {i}", url=url)])
+        
         retry_url = f"https://t.me/{(await bot.get_me()).username}?start={target_code}" if target_code else f"https://t.me/{(await bot.get_me()).username}?start"
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 JOIN CHANNEL", url=link)],
-            [InlineKeyboardButton(text="🔄 COBA LAGI", url=retry_url)]
-        ])
-        return await m.answer("⚠️ **AKSES DIKUNCI**\nSilahkan join dulu untuk menggunakan bot atau melihat konten.", reply_markup=kb)
+        kb_list.append([InlineKeyboardButton(text="🔄 COBA LAGI", callback_data=f"check_sub:{target_code or 'none'}")])
+        
+        return await m.answer("⚠️ **AKSES DIKUNCI**\nSilahkan join channel di bawah ini untuk melihat konten.", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_list))
 
-    # JIKA SUDAH JOIN
-    if target_code:
+    if target_code and target_code != "none":
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT file_id, type, caption FROM media WHERE code=?", (target_code,)) as cur:
                 row = await cur.fetchone()
@@ -135,25 +138,38 @@ async def start_handler(m: Message):
 
     await m.answer(f"👋 Halo {m.from_user.first_name}!", reply_markup=member_main_kb())
 
-# ================= LOGIKA AUTO POST =================
+@dp.callback_query(F.data.startswith("check_sub:"))
+async def check_sub_cb(c: CallbackQuery):
+    unjoined = await check_membership(c.from_user.id)
+    if unjoined:
+        return await c.answer("❌ Kamu belum join semua channel!", show_alert=True)
+    
+    await c.message.delete()
+    code = c.data.split(":")[1]
+    # Simulasi ulang start
+    m = c.message
+    m.text = f"/start {code}" if code != "none" else "/start"
+    m.from_user = c.from_user
+    await start_handler(m)
+
+# ================= LOGIKA AUTO POST (MULTI-PART) =================
 @dp.message(F.chat.type == "private", (F.photo | F.video | F.document), StateFilter(None))
 async def admin_upload(m: Message, state: FSMContext):
     if not await is_admin(m.from_user.id): return
     fid = m.photo[-1].file_id if m.photo else (m.video.file_id if m.video else m.document.file_id)
     mtype = "photo" if m.photo else "video"
-    current_caption = m.caption if m.caption else ""
-    await state.update_data(temp_fid=fid, temp_type=mtype, temp_caption=current_caption)
+    await state.update_data(temp_fid=fid, temp_type=mtype, temp_caption=(m.caption or ""), parts=[])
     await state.set_state(PostMedia.waiting_for_post_title)
-    await m.reply("📝 **PILIH JUDUL UNTUK CHANNEL:**", reply_markup=await get_titles_kb())
+    await m.reply("📝 **PILIH JUDUL:**", reply_markup=await get_titles_kb())
 
 @dp.callback_query(PostMedia.waiting_for_post_title, F.data.startswith("t_sel:"))
 async def select_title_handler(c: CallbackQuery, state: FSMContext):
     title = c.data.split(":")[1]
-    await finish_posting(c.message, state, title)
+    await add_part_to_list(c.message, state, title)
 
 @dp.callback_query(PostMedia.waiting_for_post_title, F.data == "add_title_btn")
 async def add_new_title_btn(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("Ketik judul baru untuk channel:")
+    await c.message.answer("Ketik judul baru:")
     await state.set_state(AdminStates.waiting_for_add_title)
 
 @dp.message(AdminStates.waiting_for_add_title)
@@ -161,37 +177,118 @@ async def process_save_title(m: Message, state: FSMContext):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO titles (title) VALUES (?)", (m.text,))
         await db.commit()
-    await finish_posting(m, state, m.text)
+    await add_part_to_list(m, state, m.text)
 
-async def finish_posting(msg, state, p_title):
+async def add_part_to_list(msg, state, p_title):
     data = await state.get_data()
     code = uuid.uuid4().hex[:15]
-    # Gunakan INSERT OR IGNORE dan sebutkan kolomnya satu per satu
+    
+    # Simpan ke DB dulu
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute(
-            "INSERT OR IGNORE INTO media (code, file_id, type, caption) VALUES (?, ?, ?, ?)", 
-            (code, data['temp_fid'], data['temp_type'], data['temp_caption'])
-        )
+        await db.execute("INSERT OR IGNORE INTO media (code, file_id, type, caption) VALUES (?, ?, ?, ?)", 
+                         (code, data['temp_fid'], data['temp_type'], data['temp_caption']))
         await db.commit()
+    
+    parts = data.get('parts', [])
+    parts.append(code)
+    await state.update_data(parts=parts, current_title=p_title)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ TAMBAH PART LAIN", callback_data="add_more_part")],
+        [InlineKeyboardButton(text="🚀 POST SEKARANG", callback_data="final_post")]
+    ])
+    await msg.answer(f"✅ Part {len(parts)} ditambahkan ke judul: **{p_title}**\n\nMau tambah part lain atau langsung post?", reply_markup=kb)
+    await state.set_state(PostMedia.waiting_for_final_confirm)
 
-    link = f"https://t.me/{(await bot.get_me()).username}?start={code}"
+@dp.callback_query(PostMedia.waiting_for_final_confirm, F.data == "add_more_part")
+async def add_more_part_cb(c: CallbackQuery, state: FSMContext):
+    await c.message.answer("Kirim media (Photo/Video) untuk part selanjutnya:")
+    await state.set_state(None) # Reset ke private media handler
+
+@dp.message(F.chat.type == "private", (F.photo | F.video | F.document), StateFilter(PostMedia.waiting_for_final_confirm))
+async def handle_next_part(m: Message, state: FSMContext):
+    data = await state.get_data()
+    fid = m.photo[-1].file_id if m.photo else (m.video.file_id if m.video else m.document.file_id)
+    mtype = "photo" if m.photo else "video"
+    await state.update_data(temp_fid=fid, temp_type=mtype, temp_caption=(m.caption or ""))
+    await add_part_to_list(m, state, data['current_title'])
+
+@dp.callback_query(PostMedia.waiting_for_final_confirm, F.data == "final_post")
+async def final_post_handler(c: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    parts = data['parts']
+    p_title = data['current_title']
+    bot_username = (await bot.get_me()).username
+    
+    rows = []
+    if len(parts) == 1:
+        rows.append([InlineKeyboardButton(text="🎬 TONTON SEKARANG", url=f"https://t.me/{bot_username}?start={parts[0]}")])
+    else:
+        temp_row = []
+        for i, code in enumerate(parts, 1):
+            temp_row.append(InlineKeyboardButton(text=f"Part {i}", url=f"https://t.me/{bot_username}?start={code}"))
+            if len(temp_row) == 2:
+                rows.append(temp_row)
+                temp_row = []
+        if temp_row: rows.append(temp_row)
+
     ch = await get_config("channel_post")
     cover = await get_config("cover_file_id")
-
+    
     if ch:
         try:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎬 TONTON SEKARANG", url=link)]])
-            if cover:
-                await bot.send_photo(ch, cover, caption=f"🔥 **{p_title}**", reply_markup=kb)
-            else:
-                await bot.send_message(ch, f"🔥 **{p_title}**", reply_markup=kb)
-        except Exception as e:
-            await msg.answer(f"❌ Gagal kirim ke channel: {e}")
+            if cover: await bot.send_photo(ch, cover, caption=f" **{p_title}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            else: await bot.send_message(ch, f" **{p_title}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            await c.message.answer("✅ Berhasil di posting ke channel!")
+        except Exception as e: await c.message.answer(f"❌ Error Post: {e}")
     
-    await msg.answer(f"✅ Berhasil!\nLink: `{link}`")
     await state.clear()
 
-# ================= HANDLERS ADMIN =================
+# ================= MEMBER INTERACTION (FIXED) =================
+@dp.callback_query(F.data == "menu_ask")
+async def ask_btn(c: CallbackQuery, state: FSMContext):
+    await c.message.answer("Silahkan kirim pesan/pertanyaanmu:"); await state.set_state(MemberStates.waiting_for_ask)
+
+@dp.message(MemberStates.waiting_for_ask)
+async def process_ask(m: Message, state: FSMContext):
+    await m.forward(OWNER_ID)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ REPLY", callback_data=f"reply:{m.from_user.id}")]])
+    await bot.send_message(OWNER_ID, f"📩 **ASK DARI: {m.from_user.id}**", reply_markup=kb)
+    await m.reply("✅ Terkirim ke admin."); await state.clear()
+
+@dp.callback_query(F.data == "menu_donasi")
+async def donasi_btn(c: CallbackQuery, state: FSMContext):
+    await c.message.answer("Kirim file/pesan donasi Anda:"); await state.set_state(MemberStates.waiting_for_donation)
+
+@dp.message(MemberStates.waiting_for_donation)
+async def process_donation(m: Message, state: FSMContext):
+    cap = m.caption if m.caption else (m.text if m.text else "Tanpa pesan")
+    await m.forward(OWNER_ID)
+    await bot.send_message(OWNER_ID, f"🎁 **DONASI BARU**\nDari: `{m.from_user.id}`\nCaption: {cap}")
+    await m.reply("✅ Donasi terkirim."); await state.clear()
+
+@dp.callback_query(F.data == "menu_vip")
+async def order_vip(c: CallbackQuery, state: FSMContext):
+    qris = await get_config("qris_file_id")
+    if not qris: return await c.answer("QRIS belum diset.", show_alert=True)
+    await bot.send_photo(c.message.chat.id, qris, caption="Scan & kirim SS bukti bayar (Jangan dipencet menu lain dulu):")
+    await state.set_state(MemberStates.waiting_for_vip_ss)
+
+@dp.callback_query(F.data == "vip_preview")
+async def preview_vip(c: CallbackQuery):
+    prev = await get_config("preview_msg_id")
+    if not prev: return await c.answer("Preview belum diset.")
+    # Preview tidak merusak state VIP karena tidak memanggil state.clear()
+    await bot.copy_message(c.message.chat.id, OWNER_ID, int(prev))
+
+@dp.message(MemberStates.waiting_for_vip_ss, F.photo)
+async def process_vip_ss(m: Message, state: FSMContext):
+    await m.forward(OWNER_ID)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔑 REPLY", callback_data=f"reply:{m.from_user.id}")]])
+    await bot.send_message(OWNER_ID, f"💎 **SS VIP DARI: {m.from_user.id}**", reply_markup=kb)
+    await m.reply("✅ Bukti SS terkirim."); await state.clear()
+
+# ================= ADMIN HANDLERS =================
 @dp.message(Command("panel"))
 async def admin_panel(message: Message):
     if not await is_admin(message.from_user.id): return
@@ -213,55 +310,12 @@ async def settings_cb(c: CallbackQuery):
     fsub = await get_config("fsub_channels", "Belum diset")
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 SET POST CH", callback_data="set_post")],
-        [InlineKeyboardButton(text="👥 SET FSUB", callback_data="set_fsub_list")],
-        [InlineKeyboardButton(text="🔗 SET ADDLIST", callback_data="set_addlist")],
+        [InlineKeyboardButton(text="👥 SET FSUB (Space separated)", callback_data="set_fsub_list")],
         [InlineKeyboardButton(text="🔙 KEMBALI", callback_data="close_panel")]
     ])
     await c.message.edit_text(f"⚙️ **CONFIG**\nPost: `{ch_post}`\nFsub: `{fsub}`", reply_markup=kb)
 
-# ================= MEMBER INTERACTION (TETAP SAMA) =================
-@dp.callback_query(F.data == "menu_ask")
-async def ask_btn(c: CallbackQuery, state: FSMContext):
-    if not await check_membership(c.from_user.id): return await c.answer("Join channel dulu!", show_alert=True)
-    await c.message.answer("Silahkan kirim pesan/pertanyaanmu:"); await state.set_state(MemberStates.waiting_for_ask)
-
-@dp.message(MemberStates.waiting_for_ask)
-async def process_ask(m: Message, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ REPLY", callback_data=f"reply:{m.from_user.id}")]])
-    await bot.send_message(OWNER_ID, f"📩 **PESAN BARU**\nDari: `{m.from_user.id}`\n\n{m.text}", reply_markup=kb)
-    await m.reply("✅ Terkirim ke admin."); await state.clear()
-
-@dp.callback_query(F.data == "menu_donasi")
-async def donasi_btn(c: CallbackQuery, state: FSMContext):
-    if not await check_membership(c.from_user.id): return await c.answer("Join channel dulu!", show_alert=True)
-    await c.message.answer("Kirim file/pesan donasi Anda:"); await state.set_state(MemberStates.waiting_for_donation)
-
-@dp.message(MemberStates.waiting_for_donation)
-async def process_donation(m: Message, state: FSMContext):
-    await m.copy_to(OWNER_ID, caption=f"🎁 **DONASI BARU**\nDari: `{m.from_user.id}`")
-    await m.reply("✅ Terkirim ke admin."); await state.clear()
-
-@dp.callback_query(F.data == "menu_vip")
-async def order_vip(c: CallbackQuery, state: FSMContext):
-    if not await check_membership(c.from_user.id): return await c.answer("Join channel dulu!", show_alert=True)
-    qris = await get_config("qris_file_id")
-    if not qris: return await c.answer("QRIS belum diset.", show_alert=True)
-    await bot.send_photo(c.message.chat.id, qris, caption="Scan & kirim SS bukti bayar:"); await state.set_state(MemberStates.waiting_for_vip_ss)
-
-@dp.message(MemberStates.waiting_for_vip_ss, F.photo)
-async def process_vip_ss(m: Message, state: FSMContext):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔑 REPLY", callback_data=f"reply:{m.from_user.id}")]])
-    await m.copy_to(OWNER_ID, caption=f"💎 **SS VIP**\nDari: `{m.from_user.id}`", reply_markup=kb)
-    await m.reply("✅ Bukti SS terkirim."); await state.clear()
-
-@dp.callback_query(F.data == "vip_preview")
-async def preview_vip(c: CallbackQuery):
-    if not await check_membership(c.from_user.id): return await c.answer("Join channel dulu!", show_alert=True)
-    prev = await get_config("preview_msg_id")
-    if not prev: return await c.answer("Preview belum diset.")
-    await bot.copy_message(c.message.chat.id, OWNER_ID, int(prev))
-
-# --- SISANYA TETAP SAMA ---
+# --- FUNGSI UPDATE DAN LAINNYA ---
 @dp.message(Command("update"))
 async def update_database(m: Message):
     if not await is_admin(m.from_user.id): return
@@ -300,19 +354,11 @@ async def process_set_post(m: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "set_fsub_list")
 async def set_fsub_cb(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("Username Fsub:"); await state.set_state(AdminStates.waiting_for_fsub_list)
+    await c.message.answer("Kirim Username Channel Fsub (pisahkan dengan spasi):\nContoh: `@ch1 @ch2`:"); await state.set_state(AdminStates.waiting_for_fsub_list)
 
 @dp.message(AdminStates.waiting_for_fsub_list)
 async def process_fsub(m: Message, state: FSMContext):
     await set_config("fsub_channels", m.text.strip()); await m.reply("✅ Fsub Set."); await state.clear()
-
-@dp.callback_query(F.data == "set_addlist")
-async def set_addlist_cb(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("Link Addlist:"); await state.set_state(AdminStates.waiting_for_addlist)
-
-@dp.message(AdminStates.waiting_for_addlist)
-async def process_addlist(m: Message, state: FSMContext):
-    await set_config("addlist_link", m.text.strip()); await m.reply("✅ Link Set."); await state.clear()
 
 @dp.callback_query(F.data == "set_cover")
 async def btn_set_cover(c: CallbackQuery, state: FSMContext):
@@ -332,7 +378,7 @@ async def save_qris(m: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "set_preview")
 async def btn_set_prev(c: CallbackQuery, state: FSMContext):
-    await c.message.answer("Kirim media preview:"); await state.set_state(AdminStates.waiting_for_preview)
+    await c.message.answer("Kirim media preview (balas pesan ini):"); await state.set_state(AdminStates.waiting_for_preview)
 
 @dp.message(AdminStates.waiting_for_preview)
 async def save_preview(m: Message, state: FSMContext):
@@ -373,4 +419,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
