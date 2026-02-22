@@ -76,18 +76,23 @@ async def is_admin(user_id: int):
 
 async def check_membership(user_id: int):
     raw_targets = await get_config("fsub_channels")
-    if not raw_targets: return []
-    targets = raw_targets.split()
+    if not raw_targets or raw_targets.strip() == "": return []
+    
+    # Pecah berdasarkan spasi dan buang string kosong/sampah
+    targets = [t.strip() for t in raw_targets.split() if t.strip()]
     unjoined = []
+    
     for target in targets:
+        clean_target = target.replace("https://t.me/", "").replace("@", "")
+        if not clean_target: continue # Lewatin kalau kosong
+        
         try:
-            # Fix: Pastikan username diawali @ untuk get_chat_member
-            chat_target = target if target.startswith("@") else f"@{target}"
-            m = await bot.get_chat_member(chat_id=chat_target, user_id=user_id)
-            if m.status in ("left", "kicked"):
-                unjoined.append(target)
+            m = await bot.get_chat_member(chat_id=f"@{clean_target}", user_id=user_id)
+            if m.status not in ("member", "administrator", "creator"):
+                unjoined.append(clean_target)
         except Exception:
-            unjoined.append(target)
+            # Kalau channel ga ketemu/bot bukan admin, anggep wajib join
+            unjoined.append(clean_target)
     return unjoined
 
 # ================= KEYBOARDS =================
@@ -384,6 +389,14 @@ async def process_broadcast(m: Message, state: FSMContext):
                 except: pass
     await m.reply(f"✅ Terkirim ke {count} user."); await state.clear()
 
+@dp.message(Command("resetfsub"))
+async def reset_fsub_darurat(m: Message):
+    if not await is_admin(m.from_user.id): return
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM config WHERE key='fsub_channels'")
+        await db.commit()
+    await m.reply("✅ **FSUB DIBERSIHKAN TOTAL!**\nSekarang fsub kosong. Silahkan set ulang lewat /panel dengan bener.")
+
 @dp.callback_query(F.data == "close_panel")
 async def close_panel(c: CallbackQuery): await c.message.delete()
 
@@ -393,3 +406,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
