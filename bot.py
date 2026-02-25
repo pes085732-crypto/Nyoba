@@ -18,11 +18,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ================= KONFIGURASI =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("ADMIN_ID"))
-except:
+try:
+    # Kita coba ambil ADMIN_ID dari environment
+    OWNER_ID = int(os.getenv("ADMIN_ID"))
+except (TypeError, ValueError):
+    # Kalau ADMIN_ID kosong atau bukan angka, set jadi 0 sementara
     OWNER_ID = 0
-DB_NAME = "media.db"  # Nama DB tetap sama agar data lama aman
 
+DB_NAME = "media.db"  # Nama DB tetap sama agar data lama aman
 logging.basicConfig(level=logging.INFO)
 
 # ================= STATES =================
@@ -301,4 +304,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
+
 
