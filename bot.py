@@ -259,8 +259,14 @@ async def run_new_clone(token):
         await new_dp.start_polling(new_bot)
     except: pass
 
+# Tambahkan ini di luar fungsi main (di bagian atas setelah konfigurasi)
+# agar variabel 'bot' bisa diakses di mana saja
+master_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+
 async def main():
     await init_db()
+    
+    # Jalankan background task backup
     asyncio.create_task(auto_backup_task())
     
     # Jalankan ulang semua bot clone yang ada di DB
@@ -270,8 +276,13 @@ async def main():
                 asyncio.create_task(run_new_clone(row[0]))
 
     print("🚀 Master & Clone Bots Running...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    
+    # Gunakan master_bot (bukan 'bot' huruf kecil saja)
+    await master_bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(master_bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
