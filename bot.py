@@ -18,7 +18,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 # ================= KONFIGURASI =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("ADMIN_ID", 0))
+OWNER_ID = int(os.getenv("ADMIN_ID"))
+except:
+    OWNER_ID = 0
 DB_NAME = "media.db"  # Nama DB tetap sama agar data lama aman
 
 logging.basicConfig(level=logging.INFO)
@@ -70,7 +72,9 @@ async def get_config(key, default=None):
             return row[0] if row else default
 
 async def is_admin(user_id: int, bot_id: int):
-    if user_id == OWNER_ID: return True
+    # Pastikan user_id diconvert ke int buat jaga-jaga
+    if int(user_id) == OWNER_ID: 
+        return True
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT admin_id FROM admins WHERE admin_id=? AND bot_id=?", (user_id, bot_id)) as cur:
             return await cur.fetchone() is not None
@@ -85,15 +89,26 @@ async def send_bot_log(bot_obj: Bot, text: str):
                 except: pass
 
 async def check_fsub(bot_obj: Bot, user_id: int):
+    # Jika user adalah OWNER_ID, langsung skip FSub (Biar gak disuruh join)
+    if int(user_id) == OWNER_ID:
+        return []
+
     raw = await get_config("fsub_channels")
     if not raw: return []
+    
     channels = [c.strip() for c in raw.split() if c.strip()]
     unjoined = []
+    
     for ch in channels:
         try:
-            member = await bot_obj.get_chat_member(chat_id=f"@{ch.replace('@','')}", user_id=user_id)
-            if member.status not in ["member", "administrator", "creator"]: unjoined.append(ch)
-        except: unjoined.append(ch)
+            # Telegram API butuh ID (pake -100) atau @username
+            target = ch if ch.startswith("-100") or ch.startswith("@") else f"@{ch}"
+            member = await bot_obj.get_chat_member(chat_id=target, user_id=user_id)
+            if member.status not in ["member", "administrator", "creator"]:
+                unjoined.append(ch)
+        except Exception as e:
+            print(f"FSub Error for {ch}: {e}")
+            unjoined.append(ch)
     return unjoined
 
 # ================= KEYBOARDS =================
@@ -117,32 +132,32 @@ async def get_titles_kb():
 dp = Dispatcher(storage=MemoryStorage())
 
 @dp.message(CommandStart())
+@dp.message(CommandStart())
 async def start_handler(m: Message):
+    # Tambahkan user ke DB
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (m.from_user.id,))
         await db.commit()
     
-    args = m.text.split()
-    target_code = args[1] if len(args) > 1 else "none"
+    # CEK JIKA USER ADALAH OWNER (Langsung bypass semua)
+    if int(m.from_user.id) == OWNER_ID:
+        return await m.answer(f"👑 Halo Bos {m.from_user.first_name}!\nAnda adalah Owner Pusat.", reply_markup=member_main_kb())
 
-    # Cek FSub
+    # Jika bukan owner, baru cek FSub
     unjoined = await check_fsub(m.bot, m.from_user.id)
     if unjoined:
-        kb = [[InlineKeyboardButton(text=f"📢 JOIN {c}", url=f"https://t.me/{c.replace('@','')}")] for c in unjoined]
-        kb.append([InlineKeyboardButton(text="🔄 COBA LAGI", callback_data=f"chk:{target_code}")])
-        return await m.answer("⚠️ **AKSES DIKUNCI**\nSilahkan join channel sponsor kami dulu:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        kb = []
+        for c in unjoined:
+            # Logika bikin link join: Kalau ID -100, admin harus set link manual 
+            # atau bot bakal arahin ke username jika tersedia.
+            btn_text = f"📢 JOIN CHANNEL"
+            url = f"https://t.me/{c.replace('@','').replace('-100','')}" if not c.startswith("-100") else "https://t.me/c/xxxxxx" 
+            kb.append([InlineKeyboardButton(text=btn_text, url=url)])
+            
+        kb.append([InlineKeyboardButton(text="🔄 COBA LAGI", callback_data="check_ulang")])
+        return await m.answer("⚠️ **AKSES DIKUNCI**\nJoin channel dulu bre!", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-    if target_code != "none":
-        async with aiosqlite.connect(DB_NAME) as db:
-            async with db.execute("SELECT file_id, type, caption FROM media WHERE code=?", (target_code,)) as cur:
-                row = await cur.fetchone()
-                if row:
-                    await send_bot_log(m.bot, f"User {m.from_user.id} mengambil file {target_code}")
-                    if row[1] == "photo": await m.answer_photo(row[0], caption=row[2], protect_content=True)
-                    else: await m.answer_video(row[0], caption=row[2], protect_content=True)
-                    return
-    
-    await m.answer(f"👋 Halo {m.from_user.first_name}!\nSelamat datang di Bot Media Terlengkap.", reply_markup=member_main_kb())
+    await m.answer(f"👋 Halo {m.from_user.first_name}!", reply_markup=member_main_kb())
 
 # --- FITUR AUTO POST MULTI-PART ---
 @dp.message(F.chat.type == "private", (F.photo | F.video | F.document), StateFilter(None))
@@ -286,3 +301,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         pass
+
